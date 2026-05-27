@@ -1,0 +1,39 @@
+# Azure credentials and secrets — NEVER commit these
+*.env
+.env.*
+*.tfvars
+*.tfvars.json
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Azure CLI session tokens
+.azure/
+
+# Sensitive config files
+appsettings.json
+local.settings.json
+secrets.json
+
+# OS files
+.DS_Store
+.DS_Store?
+Thumbs.db
+desktop.ini
+
+# Editor files
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Python (if running scripts locally)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node (if using any JS tooling)
+node_modules/
+npm-debug.log
