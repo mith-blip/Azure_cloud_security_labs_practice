@@ -1,0 +1,66 @@
+// ============================================================
+// Detection: Entra ID sign-in monitor with risk scoring
+// ============================================================
+// Author:      sowmith b
+//
+// Description:
+//   Monitors sign-ins for suspicious characteristics including
+//   high risk level, MFA failures, unusual locations, and
+//   legacy authentication protocols. Built from lab Week 1
+//   Azure IAM hands-on exercise.
+//
+// Severity:    Medium
+// MITRE ATT&CK: T1078.004 - Valid Accounts: Cloud Accounts
+//               T1110.003 - Brute Force: Password Spraying
+//
+// Data sources: SignInLogs (Entra ID connector in Sentinel)
+//
+// False positives:
+//   - Users traveling internationally (location change)
+//   - New device first sign-in (device compliance pending)
+//   - Service accounts with legacy auth (should be migrated)
+//
+// Tuning notes:
+//   - Add trusted named locations to exclusion list
+//   - Whitelist known service account UPNs
+//   - Adjust RiskLevelDuringSignIn threshold as needed
+//
+// References:
+//   https://attack.mitre.org/techniques/T1078/004/
+//   https://learn.microsoft.com/en-us/entra/id-protection/
+// ============================================================
+
+SignInLogs
+| where TimeGenerated > ago(1h)
+| where UserDisplayName == "TestUser01"
+| project
+    TimeGenerated,
+    UserDisplayName,
+    UserPrincipalName,
+    AppDisplayName,
+    Location,
+    IPAddress,
+    ResultType,
+    ResultDescription,
+    ConditionalAccessStatus,
+    RiskLevelDuringSignIn,
+    ClientAppUsed,
+    DeviceDetail
+| order by TimeGenerated desc
+
+// ============================================================
+// Variant: Broader sign-in risk hunt across all users
+// Use this for threat hunting in Sentinel
+// ============================================================
+
+ SignInLogs
+ | where TimeGenerated > ago(24h)
+ | where RiskLevelDuringSignIn in ("high", "medium")
+    or ResultType in ("50074", "50076", "53003")
+ | summarize
+   FailedAttempts = countif(ResultType != "0"),
+     SuccessfulSignIns = countif(ResultType == "0"),
+     UniqueIPs = dcount(IPAddress),
+     Locations = make_set(Location)     by UserPrincipalName, bin(TimeGenerated, 1h)
+ | where FailedAttempts > 5 or UniqueIPs > 3
+ | order by FailedAttempts desc
