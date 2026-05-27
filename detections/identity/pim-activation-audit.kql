@@ -1,0 +1,89 @@
+// ============================================================
+// Detection: PIM role activation followed by high-priv action
+// ============================================================
+// Author:   Sowmith B
+
+//
+// Description:
+//   Detects when a PIM eligible role is activated and then
+//   a high-privilege action is performed within 15 minutes.
+//   This pattern indicates either legitimate admin work or
+//   a compromised privileged account performing malicious changes.
+//   Lab scenario: observed PIM activation audit event from
+//   Week 1 just-in-time access exercise.
+//
+// Severity:    High
+// MITRE ATT&CK: T1078.004 - Valid Accounts: Cloud Accounts
+//               T1098.003 - Account Manipulation: Add Cloud Role
+//
+// Data sources: AuditLogs (Entra ID connector in Sentinel)
+//
+// False positives:
+//   - Legitimate admin performing planned maintenance
+//   - Approved change management window activity
+//   - Break-glass account usage during incidents
+//
+// Tuning notes:
+//   - Exclude known break-glass admin UPNs
+//   - Extend time window from 15m to 30m if too noisy
+//   - Create watchlist of approved change window schedules
+//   - Correlate with change management tickets
+//
+// References:
+//   https://attack.mitre.org/techniques/T1078/004/
+//   https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/
+// ============================================================
+
+let lookback = 1h;
+let timeWindow = 15m;
+
+let PIMActivations = AuditLogs
+| where TimeGenerated > ago(lookback)
+| where OperationName has_any (
+    "Add eligible member to role in PIM completed",
+    "Add member to role in PIM completed (permanent)",
+    "Add member to role completed (PIM activation)")
+| where Result == "success"
+| extend ActivatingUser = tostring(
+    InitiatedBy.user.userPrincipalName)
+| extend ActivatedRole = tostring(
+    TargetResources[0].displayName)
+| project
+    ActivationTime = TimeGenerated,
+    ActivatingUser,
+    ActivatedRole;
+
+let HighPrivActions = AuditLogs
+| where TimeGenerated > ago(lookback)
+| where OperationName has_any (
+    "Add member to role",
+    "Remove member from role",
+    "Update user",
+    "Delete user",
+    "Reset user password",
+    "Add application",
+    "Add service principal")
+| where Result == "success"
+| extend Actor = tostring(
+    InitiatedBy.user.userPrincipalName)
+| project
+    ActionTime = TimeGenerated,
+    Actor,
+    OperationName,
+    TargetResource = tostring(TargetResources[0].displayName);
+
+PIMActivations
+| join kind=inner HighPrivActions
+    on $left.ActivatingUser == $right.Actor
+| where ActionTime between (
+    ActivationTime .. (ActivationTime + timeWindow))
+| project
+    ActivationTime,
+    ActionTime,
+    TimeDeltaMinutes = round(
+        datetime_diff('minute', ActionTime, ActivationTime), 0),
+    User = ActivatingUser,
+    ActivatedRole,
+    ActionPerformed = OperationName,
+    TargetResource
+| order by ActivationTime desc
