@@ -1,0 +1,73 @@
+// ============================================================
+// Detection: Repeated Conditional Access policy failures
+// ============================================================
+// Author:      [Your name]
+// Created:     [Date]
+// Last update: [Date]
+//
+// Description:
+//   Detects repeated Conditional Access policy blocks from
+//   the same IP or user within a short window. A single CA
+//   block is normal (travel, new device). Repeated blocks
+//   suggest credential stuffing, MFA fatigue attacks, or
+//   an attacker testing access from blocked locations.
+//   Built from Week 1 Conditional Access policy lab
+//   (Require-MFA-Outside-US policy).
+//
+// Severity:    Medium
+// MITRE ATT&CK: T1110 - Brute Force
+//               T1621 - Multi-Factor Authentication Request Generation
+//               T1556.006 - Modify Authentication: MFA
+//
+// Data sources: SignInLogs (Entra ID connector in Sentinel)
+//
+// False positives:
+//   - User traveling and repeatedly trying to sign in
+//   - Misconfigured device not meeting compliance policy
+//   - IT testing CA policies (use report-only mode instead)
+//
+// Tuning notes:
+//   - Raise threshold (currently 3) to reduce noise
+//   - Exclude known corporate egress IPs
+//   - Filter to specific high-value applications only
+//   - Correlate with user's manager for context
+//
+// References:
+//   https://attack.mitre.org/techniques/T1621/
+//   https://learn.microsoft.com/en-us/entra/identity/conditional-access/
+// ============================================================
+
+let lookback = 1h;
+let blockThreshold = 3;
+
+SignInLogs
+| where TimeGenerated > ago(lookback)
+| where ConditionalAccessStatus == "failure"
+    or ResultType in (
+        "53003",   // CA policy blocked
+        "530032",  // CA policy requires compliant device
+        "530034",  // CA policy requires MFA
+        "530301")  // CA policy blocked legacy auth
+| summarize
+    CABlocks = count(),
+    BlockedApps = make_set(AppDisplayName),
+    BlockReasons = make_set(ResultDescription),
+    Locations = make_set(Location),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by UserPrincipalName, IPAddress
+| where CABlocks >= blockThreshold
+| extend
+    DurationMinutes = round(
+        datetime_diff('minute', LastSeen, FirstSeen), 0)
+| project
+    FirstSeen,
+    LastSeen,
+    DurationMinutes,
+    UserPrincipalName,
+    IPAddress,
+    CABlocks,
+    BlockedApps,
+    BlockReasons,
+    Locations
+| order by CABlocks desc
