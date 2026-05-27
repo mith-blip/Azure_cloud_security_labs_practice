@@ -5,7 +5,7 @@ transitioning from SOC operations into Azure cloud security engineering.
 
 ## Background
 
-3+ years in SOC operations across incident response, detection engineering,
+5+ years in SOC operations across incident response, detection engineering,
 SIEM monitoring, MSSP/MDR environments, and Microsoft Sentinel. This repo
 documents practical cloud security skills built week by week.
 
