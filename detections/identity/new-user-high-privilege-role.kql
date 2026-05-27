@@ -1,0 +1,91 @@
+// ============================================================
+// Detection: New user assigned high-privilege role
+// ============================================================
+// Author:      [Your name]
+// Created:     [Date]
+// Last update: [Date]
+//
+// Description:
+//   Alerts when a newly created user account (less than 7 days
+//   old) is assigned a high-privilege Entra ID or Azure role
+//   such as Global Administrator, Privileged Role Administrator,
+//   Owner, or User Access Administrator. This pattern is
+//   consistent with backdoor account creation after initial
+//   access. Built from Week 1 RBAC and group assignment lab.
+//
+// Severity:    High
+// MITRE ATT&CK: T1098.003 - Account Manipulation: Add Cloud Role
+//               T1136.003 - Create Account: Cloud Account
+//
+// Data sources: AuditLogs (Entra ID connector in Sentinel)
+//
+// False positives:
+//   - Legitimate new admin onboarding (verify with HR/IT)
+//   - Automated provisioning systems (add service account UPNs to exclusion)
+//   - Break-glass account creation (document and exclude)
+//
+// Tuning notes:
+//   - Adjust newAccountAgeDays threshold (default 7 days)
+//   - Add known provisioning automation accounts to exclusion list
+//   - Correlate with HR system new-hire data if available
+//   - Cross-reference with ServiceNow/ITSM change tickets
+//
+// References:
+//   https://attack.mitre.org/techniques/T1098/003/
+//   https://attack.mitre.org/techniques/T1136/003/
+// ============================================================
+
+let lookback = 24h;
+let newAccountAgeDays = 7d;
+
+let HighPrivRoles = dynamic([
+    "Global Administrator",
+    "Privileged Role Administrator",
+    "Security Administrator",
+    "User Access Administrator",
+    "Owner",
+    "Contributor",
+    "Application Administrator",
+    "Cloud Application Administrator"]);
+
+let NewAccounts = AuditLogs
+| where TimeGenerated > ago(newAccountAgeDays)
+| where OperationName == "Add user"
+| where Result == "success"
+| extend NewUserUPN = tostring(
+    TargetResources[0].userPrincipalName)
+| extend CreatedTime = TimeGenerated
+| project NewUserUPN, CreatedTime;
+
+let RoleAssignments = AuditLogs
+| where TimeGenerated > ago(lookback)
+| where OperationName has_any (
+    "Add member to role",
+    "Add eligible member to role")
+| where Result == "success"
+| extend AssignedUserUPN = tostring(
+    TargetResources[0].userPrincipalName)
+| extend AssignedRole = tostring(
+    TargetResources[1].displayName)
+| extend AssignedBy = tostring(
+    InitiatedBy.user.userPrincipalName)
+| where AssignedRole in (HighPrivRoles)
+| project
+    AssignmentTime = TimeGenerated,
+    AssignedUserUPN,
+    AssignedRole,
+    AssignedBy;
+
+RoleAssignments
+| join kind=inner NewAccounts
+    on $left.AssignedUserUPN == $right.NewUserUPN
+| extend AccountAgeHours = round(
+    datetime_diff('hour', AssignmentTime, CreatedTime), 0)
+| project
+    AssignmentTime,
+    CreatedTime,
+    AccountAgeHours,
+    NewUser = AssignedUserUPN,
+    AssignedRole,
+    AssignedBy
+| order by AssignmentTime desc
